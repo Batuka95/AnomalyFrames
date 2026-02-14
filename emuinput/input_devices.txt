@@ -1,0 +1,66 @@
+﻿I: Bus=0019 Vendor=0000 Product=0001 Version=0000
+N: Name="Power Button"
+P: Phys=LNXPWRBN/button/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXPWRBN:00/input/input0
+U: Uniq=
+H: Handlers=kbd event0 
+B: PROP=0
+B: EV=3
+B: KEY=10000000000000 0
+
+I: Bus=0019 Vendor=0000 Product=0003 Version=0000
+N: Name="Sleep Button"
+P: Phys=LNXSLPBN/button/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXSLPBN:00/input/input1
+U: Uniq=
+H: Handlers=kbd event1 
+B: PROP=0
+B: EV=3
+B: KEY=4000 0 0
+
+I: Bus=0019 Vendor=0000 Product=0006 Version=0000
+N: Name="Video Bus"
+P: Phys=LNXVIDEO/video/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXSYBUS:00/PNP0A03:00/LNXVIDEO:00/input/input2
+U: Uniq=
+H: Handlers=kbd event2 
+B: PROP=0
+B: EV=3
+B: KEY=3e000b00000000 0 0 0
+
+I: Bus=0001 Vendor=80ee Product=cafe Version=0601
+N: Name="Xiaomi mouse integration"
+P: Phys=
+S: Sysfs=/devices/pci0000:00/0000:00:04.0/input/input3
+U: Uniq=
+H: Handlers=event3 
+B: PROP=0
+B: EV=b
+B: KEY=10000 0 0 c000000000000 0
+B: ABS=3
+
+I: Bus=0000 Vendor=1234 Product=0001 Version=0001
+N: Name="Xiaomi Input"
+P: Phys=
+S: Sysfs=/devices/virtual/input/input4
+U: Uniq=
+H: Handlers=rfkill kbd mouse0 event4 
+B: PROP=2
+B: EV=f
+B: KEY=10 0 0 0 420 ff0000 ffffffffffffffff ffffffffffffffff ffffffffffffffff fffffffffffffffe
+B: REL=143
+B: ABS=660800000000000
+
+I: Bus=0000 Vendor=1235 Product=0002 Version=0001
+N: Name="Xiaomi Joystick"
+P: Phys=
+S: Sysfs=/devices/virtual/input/input5
+U: Uniq=
+H: Handlers=mouse1 event5 
+B: PROP=0
+B: EV=20000f
+B: KEY=f00000000 0 0 200000000 7fff0000000103ff 0 0 0 0
+B: REL=3
+B: ABS=3003f
+B: FF=10000 0
+

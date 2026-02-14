@@ -1,0 +1,246 @@
+UINPUT INTEGRATION HANDOFF (EYES PROJECT)
+=========================================
+
+Purpose
+-------
+This document captures the exact methods and flow currently used to drive emulator input via uinput/uinputd, so another program (or an LLM generating that program) can implement the same backend behavior.
+
+
+1) MODULES AND ENTRY POINTS
+---------------------------
+Primary backend package:
+- emuinput/emuinput/adb.py
+- emuinput/emuinput/protocol.py
+- emuinput/emuinput/controller.py
+
+Primary app integration points:
+- prototype.py
+
+Main classes used:
+- Adb (emuinput.adb.Adb)
+- UinputdClient (emuinput.protocol.UinputdClient)
+- EmuController (emuinput.controller.EmuController)
+
+
+2) METHODS USED TO UTILIZE UINPUT
+---------------------------------
+App-level methods in prototype.py:
+- _uinput_backend_enabled() -> bool
+- _try_load_emuinput_classes()
+- _resolve_emuinput_bin_dir() -> Optional[Path]
+- _resolve_emuinput_adb_exe_candidates(adb_exe_value: str) -> list[str]
+- _resolve_emuinput_adb_exe(adb_exe_value: str) -> str
+- _attempt_emuinput_adb_repair(adb_exe_path: str) -> bool
+- _ensure_emuinput_controller()
+- _close_emuinput_controller() -> None
+- _invalidate_emuinput_controller() -> None
+- _resolve_rotation_mode(hello: dict[str, int]) -> str
+- _map_base_to_uinput_coords(base_x: float, base_y: float, hello: dict[str, int]) -> tuple[int, int, str]
+- click(...) uses controller.tap(...)
+- type_text_backend(self, text: str) uses controller.type_text(...)
+- press_enter_backend(self) uses controller.press_enter()
+- drag_with_curve(...) uses controller.drag(...)
+- _warmup_uinput_backend(self) preflights _ensure_emuinput_controller()
+
+Backend library methods in emuinput:
+- Adb.run(...)
+- Adb.shell(...)
+- Adb.push(...)
+- Adb.forward(...)
+- Adb.remove_forward(...)
+- UinputdClient.connect()
+- UinputdClient.request(line: str)
+- UinputdClient.hello() -> dict[x_min, x_max, y_min, y_max]
+- EmuController.ensure_daemon()
+- EmuController.tap(x, y, down_ms=70)
+- EmuController.drag(x0, y0, x1, y1, duration_ms=350, steps=24)
+- EmuController.key_event(key_code, value)
+- EmuController.key_tap(key_code, down_ms=45)
+- EmuController.type_text(text, key_down_ms=38, inter_key_ms=30)
+- EmuController.press_enter(down_ms=45)
+- EmuController.close()
+
+
+3) RUNTIME FLOW (CURRENT IMPLEMENTATION)
+----------------------------------------
+1. Config selects backend:
+   - input_backend = uinput
+2. App calls _ensure_emuinput_controller() before input actions.
+3. _ensure_emuinput_controller():
+   - loads emuinput classes dynamically
+   - resolves bin dir containing uinputd binaries
+   - resolves adb executable candidates
+   - creates Adb + EmuController
+   - calls controller.ensure_daemon()
+   - caches controller + HELLO range
+4. Action methods map coordinates and invoke controller methods:
+   - click -> tap
+   - drag -> drag
+   - text -> type_text
+   - enter -> press_enter
+5. On failures:
+   - invalidate cached controller
+   - retry once/twice depending on call site
+   - optional adb autofix during init
+6. On shutdown:
+   - _close_emuinput_controller() via atexit
+
+
+4) DAEMON LIFECYCLE DETAILS (ensure_daemon)
+-------------------------------------------
+EmuController.ensure_daemon() does:
+1. If client already connected, sends HELLO health-check and reuses connection.
+2. Chooses local binary:
+   - arm64-v8a/uinputd or x86_64/uinputd (based on ro.product.cpu.abi + fallback order)
+3. Pushes binary to emulator:
+   - remote path: /data/local/tmp/uinputd
+4. chmod + kill old daemon:
+   - chmod 755 /data/local/tmp/uinputd
+   - toybox pkill -x uinputd
+5. Rebuilds ADB forward:
+   - remove tcp:<host_port>
+   - forward tcp:<host_port> -> localabstract:uinputd
+6. Starts daemon:
+   - toybox nohup /data/local/tmp/uinputd --daemon > /data/local/tmp/uinputd.log 2>&1 &
+7. Verifies pid (pidof uinputd), then connects socket client and sends HELLO.
+8. Stores HELLO axis range and (diagnostic) detected event node.
+
+
+5) LINE PROTOCOL COMMANDS (uinputd)
+-----------------------------------
+Commands accepted by native daemon:
+- HELLO
+  Response: OK <x_min> <x_max> <y_min> <y_max>
+- DOWN <x> <y>
+  Response: OK or ERR down
+- MOVE <x> <y>
+  Response: OK or ERR move
+- UP
+  Response: OK or ERR up
+- KEY <key_code> <value>
+  Response: OK or ERR key
+- QUIT
+  Response: BYE
+
+Unknown command response:
+- ERR unknown
+
+
+6) COORDINATE MAPPING CONTRACT
+------------------------------
+Source space in app:
+- BASE_FRAME_WIDTH = 960
+- BASE_FRAME_HEIGHT = 540
+
+Mapping method:
+- _map_base_to_uinput_coords(base_x, base_y, hello)
+- normalizes base coordinates to [0..1]
+- applies rotation mode:
+  - none: direct
+  - cw: (x,y) -> (y, 1-x)
+  - ccw: (x,y) -> (1-y, x)
+- maps normalized values into HELLO axis range
+- clamps final coordinates to daemon-reported min/max
+
+Rotation mode:
+- emuinput_rotation config: auto | none | cw | ccw
+- auto chooses ccw when source orientation and HELLO orientation differ; else none
+
+
+7) TEXT INPUT CONTRACT
+----------------------
+Text path:
+- prototype.py type_text_backend() -> EmuController.type_text()
+
+Character support currently implemented in EmuController._char_to_key:
+- a-z, A-Z
+- 0-9
+- hyphen (-), underscore (_), space
+- Enter handled separately via press_enter()
+
+Unsupported chars:
+- raise ValueError("unsupported character for uinput typing: ...")
+
+Typing behavior:
+- optional Shift for uppercase and underscore
+- key down + key up per character
+- default per-key timings:
+  - key_down_ms = 38
+  - inter_key_ms = 30
+
+
+8) KEY CODES USED
+-----------------
+Defined constants:
+- KEY_ENTER = 28
+- KEY_BACKSPACE = 14
+- KEY_SPACE = 57
+- KEY_MINUS = 12
+- KEY_LEFTSHIFT = 42
+
+Letter and digit maps are explicit in controller.py (_LETTER_KEYCODES, _DIGIT_KEYCODES).
+
+
+9) CONFIG KEYS REQUIRED
+-----------------------
+Used in config_prototype.txt:
+- input_backend = uinput
+- emuinput_serial = 127.0.0.1:5555
+- emuinput_host_port = 27183
+- emuinput_adb_exe = C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe
+- emuinput_adb_server_port = 5037
+- emuinput_bin_dir = emuinput\bin\android
+- emuinput_rotation = auto
+- emuinput_autofix = 1 (optional but supported)
+
+Defaults in code if missing:
+- serial: 127.0.0.1:5555
+- host_port: 27183
+- adb_exe: adb
+- adb_server_port: 5037
+- rotation: auto
+- autofix: true
+
+
+10) FAILURE / RETRY BEHAVIOR TO REPLICATE
+-----------------------------------------
+- If init fails, app tries multiple adb candidates (up to first 6).
+- If emuinput_autofix is enabled:
+  - kill-server
+  - start-server
+  - adb connect <serial>
+  - adb -s <serial> get-state
+  - then retry controller init once for that adb candidate.
+- Runtime input calls invalidate cached controller on exception and retry.
+- If backend not ready at startup warmup, app keeps backend=uinput and retries on demand.
+
+
+11) MINIMAL INTEGRATION TEMPLATE
+--------------------------------
+Pseudo-flow for another program:
+1. Create Adb(adb_exe, adb_server_port, timeout).
+2. Create EmuController(serial, adb, host_port, bin_dir).
+3. hello = controller.ensure_daemon()
+4. For taps/drags:
+   - convert app coords to uinput coords using hello range (+ rotation rules)
+   - controller.tap(...) or controller.drag(...)
+5. For text:
+   - controller.type_text(text)
+   - controller.press_enter() when needed
+6. On exception:
+   - controller.close()
+   - rebuild from step 1
+7. On shutdown:
+   - controller.close()
+
+
+12) FILES TO PROVIDE AS CONTEXT TO AN LLM
+-----------------------------------------
+Give these files together for highest accuracy:
+- prototype.py
+- emuinput/emuinput/controller.py
+- emuinput/emuinput/protocol.py
+- emuinput/emuinput/adb.py
+- emuinput/native/uinputd/uinputd.c
+- config_prototype.txt
+

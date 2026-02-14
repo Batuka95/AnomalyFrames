@@ -1,0 +1,3 @@
+C:/Projects/Eyes/emuinput/build/android/x86_64/CMakeFiles/uinputd.dir
+C:/Projects/Eyes/emuinput/build/android/x86_64/CMakeFiles/edit_cache.dir
+C:/Projects/Eyes/emuinput/build/android/x86_64/CMakeFiles/rebuild_cache.dir

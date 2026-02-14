@@ -1,0 +1,149 @@
+CODEx NOTES: emuinput / uinputd session rundown
+==================================================
+
+What we built and what it does
+- uinputd is an Android-native daemon running inside the MuMu/Xiaomi-branded emulator.
+- It exposes a simple line-based socket protocol over an Android abstract UNIX socket named "uinputd"
+  (adb target: localabstract:uinputd).
+- Windows talks to it via ADB port-forward:
+  adb -s 127.0.0.1:5555 forward tcp:27183 localabstract:uinputd
+
+Protocol (validated over TCP)
+- HELLO -> "OK x_min x_max y_min y_max" (we saw "OK 0 540 0 960")
+- DOWN x y -> "OK"
+- MOVE x y -> "OK"
+- UP -> "OK"
+- KEY code value -> "OK" (value: 1=down, 0=up, 2=repeat)
+
+Those coordinates correspond to the emulator’s input coordinate system as exposed by the daemon.
+
+Is this “real injection”? Proof we now have
+- When uinputd runs, it creates a virtual input device visible in:
+  - /proc/bus/input/devices
+  - /dev/input/eventN
+- The device block looks like:
+  - Name="uinputd-virtual-touchscreen"
+  - Handlers=mouse2 event6  (event number can change across runs)
+- Running getevent while injecting produces real Linux input events:
+  - EV_ABS ABS_MT_TRACKING_ID
+  - EV_ABS ABS_MT_POSITION_X / ABS_MT_POSITION_Y
+  - EV_KEY BTN_TOUCH DOWN/UP
+  - EV_SYN SYN_REPORT
+- The captured coordinates match injected points. Example:
+  - Injected: DOWN 270 480
+  - Captured: ABS_MT_POSITION_X 0x010e (270), ABS_MT_POSITION_Y 0x01e0 (480)
+
+Conclusion: downstream Android input stack sees a legit /dev/input touchscreen source.
+
+Emulator-specific operational truths (MuMu/Xiaomi shell quirks)
+This emulator’s /system/bin/sh is unusually sensitive. These rules prevent hours of pain:
+
+1) Avoid parentheses in any adb shell script
+- This shell throws: "syntax error: unexpected '('"
+- It can even trigger on echo banners like "(tail)" inside quotes.
+- Rule: never include '(' or ')' in remote commands, even in strings.
+
+2) Avoid complex nested quoting inside adb shell strings
+- Patterns like grep "Name=\"uinputd" caused "/system/bin/sh: no closing quote".
+- Rule: don’t pattern-match quoted strings on-device.
+  Prefer matching plain tokens like "uinputd-virtual-touchscreen" without quotes.
+
+3) PowerShell pitfalls with remote redirection and $?
+- PowerShell can interpret redirections intended for Android if quoting is wrong.
+- $? in PowerShell is boolean success of the last PS command, not the remote exit code.
+- Rule: use single quotes for remote scripts whenever possible.
+  If you need remote $?, do:
+    adb shell 'cmd; echo EXIT:$?'
+  If you must pass $ inside a double-quoted PowerShell string to adb, escape it (e.g. `$!`).
+
+Daemon lifecycle: what works reliably here
+What failed / was flaky
+- pkill -f '^[/]data/local/tmp/uinputd' was unreliable on this emulator and sometimes caused exit 143
+  / killed the shell session.
+
+Known-good pattern (works reliably)
+- Kill:
+  toybox pkill -x uinputd >/dev/null 2>&1 || true
+- Start (background + log capture):
+  toybox nohup /data/local/tmp/uinputd --daemon > /data/local/tmp/uinputd.log 2>&1 &
+- Verify daemon is up:
+  toybox pidof uinputd
+- Verify device exists:
+  toybox grep -ni -A12 -B2 uinputd-virtual-touchscreen /proc/bus/input/devices
+
+Build/host environment facts (important for automation)
+- Repo root: C:\projects\eyes\emuinput
+- Emulator ADB serial: 127.0.0.1:5555  (ignore older 127.0.0.1:16348)
+- Host forward port: 27183
+- Android SDK root: C:\Android\Sdk
+- Android NDK: ndk;26.1.10909125 (r26b)
+- Tooling confirmed: CMake 4.2.3, Ninja 1.13.2
+- uinputd build outputs:
+  - bin\android\x86_64\uinputd
+  - bin\android\arm64-v8a\uinputd
+
+Critical build lesson
+- CMake initially tried VS generator and failed with MSBuild/VCTargetsPath issues.
+- Fix: use Ninja generator for Android builds.
+
+Packaging status (Python)
+- Devtest works without installation by using sys.path injection.
+- pip install -e . currently fails because pyproject.toml is malformed (TOML decode error).
+- Rule for refactor right now: don’t rely on editable install until pyproject is fixed.
+
+What we found in the code (action items)
+- EmuController.ensure_daemon() lives in:
+  emuinput/controller.py (around line ~78)
+
+Current ensure_daemon behavior (needs adjustment for this emulator)
+- Pushes ABI-correct uinputd
+- Uses pkill -f '^[/]data/local/tmp/uinputd' else killall uinputd
+- Removes/sets port forward
+- Starts daemon with: /data/local/tmp/uinputd --daemon >/dev/null 2>&1
+- Connects client and HELLO
+
+What should change in ensure_daemon()
+1) Replace kill logic with toybox exact-name kill:
+   toybox pkill -x uinputd >/dev/null 2>&1 || true
+2) Start daemon using robust background + logging:
+   toybox nohup /data/local/tmp/uinputd --daemon > /data/local/tmp/uinputd.log 2>&1 &
+3) Add health confirmation after start:
+   sleep 0.3; toybox pidof uinputd || echo NO_PID
+   If NO_PID, dump log head:
+   toybox head -n 120 /data/local/tmp/uinputd.log
+4) Optional (but valuable): detect the event node
+   - Parse /proc/bus/input/devices for uinputd-virtual-touchscreen block
+   - Extract eventN via regex \bevent(\d+)\b
+   - Store for diagnostics (e.g. self._event_node="event6")
+5) Keep port forwarding order:
+   - remove forward -> set forward -> connect -> HELLO
+
+Proof script now exists and why it matters
+- scripts/prove_getevent.ps1 is a repeatable “green check” regression test:
+  - restart uinputd
+  - resolve event node (eventN)
+  - capture getevent
+  - inject a tap via forwarded TCP
+  - print tail showing real events
+
+Practical integration guidance for routing existing program through harness
+- Treat EmuController as the canonical injection interface:
+  - tap(x, y), drag(x0, y0, x1, y1)
+- Use HELLO bounds to clamp/scale coordinates from your program’s coordinate space to emulator space.
+- Reuse a single controller instance; ensure_daemon() caches client and retries HELLO.
+- When “it stopped working”, the fastest triage is:
+  - pidof uinputd
+  - /proc/bus/input/devices has uinputd-virtual-touchscreen block
+  - prove_getevent.ps1 shows MT events
+  - head of /data/local/tmp/uinputd.log if startup failed
+
+Known-good snippets to mirror
+- Kill:
+  toybox pkill -x uinputd >/dev/null 2>&1 || true
+- Start:
+  toybox nohup /data/local/tmp/uinputd --daemon > /data/local/tmp/uinputd.log 2>&1 &
+- Identify eventN:
+  toybox grep -ni -A12 -B2 uinputd-virtual-touchscreen /proc/bus/input/devices
+  then regex: \bevent(\d+)\b
+- Proof:
+  getevent -lt /dev/input/eventN shows MT events with BTN_TOUCH and SYN_REPORT
