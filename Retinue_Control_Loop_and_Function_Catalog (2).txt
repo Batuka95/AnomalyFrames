@@ -1,0 +1,178 @@
+Retinue.py — Control Loop & Function Catalog
+============================================================
+
+SECTION A — High-Level Flow
+---------------------------
+1) Environment setup: resize window, set DPI aware, initialize timers/flags.
+2) Start background cycles: kill_switch_cycle, heatsink_cycle, enemy_cnt_cycle (threads).
+3) UI priming: set_desto bookmark, zoom out, open Nav, switch to Enemies.
+4) Main loop: every ~0.2s, refresh screen and run timed probes, manage anomalies, combat state, and safety.
+
+SECTION B — Control Loop Breakdown
+----------------------------------
+- Initialization: not detected (may be conditional or moved)
+- Nav priming & page routing: present
+- Main while True loop start: present
+- Enemy count changes: present
+- Frigate recheck timer: present
+- Backup webs after stall: present
+- Anomaly end handling: present
+- Auto-lock enabling: present
+- Enter Siege mid-wave: present
+- Travel trigger (no enemies): present
+- Timed command probes: present
+- Frigate targeting routine: present
+- Shield logic: present
+- Low health kill switch: present
+
+Detailed Step-by-Step (runtime order):
+  • Refresh screen and ensure Nav UI is open.
+  • Update enemy count via background thread; detect wave transitions.
+  • If frigates present (from OCR), sequence through targets, toggle painter, manage siege/webs.
+  • If field empty (no enemies, auto-lock off), call travel(1) to warp to next anomaly.
+  • Periodically probe: auto-lock availability (2s), player health (5s).
+  • Safety: if local chat shows hostiles or health critical, set kill_switch and dock/exit.
+
+SECTION C — Background Cycles (Threads)
+---------------------------------------
+  • kill_switch_cycle(): monitors local chat via OCR+hash; if hostiles, unsiege, open bookmark, dock, set kill_switch.
+  • enemy_cnt_cycle(): constantly OCRs the enemy count; smooths spurious drops.
+  • heatsink_cycle(frig_lock): rotates heatsinks while frig_lock is on; respects cooldowns.
+  • enemy_distance_cycle(): parses distances to auto-target closest and apply webs; stops on stop_distance_cycle.
+
+SECTION D — Function Catalog
+----------------------------
+- print_line_number()  [line 99]
+    Utility/helper function.
+- get_scaling_factor(hwnd)  [line 106]
+    Window/DPI helpers to set a consistent capture and click coordinate space.
+- resize_window()  [line 116]
+    Window/DPI helpers to set a consistent capture and click coordinate space.
+- ocr_section(ocr_section_img, filename, ocr_left, ocr_top, ocr_right, ocr_bottom, preproc, psm, threshold, whitelist, gaussian_b)  [line 127]
+    Optical character recognition for 'section' elements.
+- grab_img(g_img, filename, crop_left, crop_top, crop_right, crop_bottom)  [line 198]
+    Captures/derives the current 'img' UI state from the screen.
+- save_img(s_img, filename, left_bound, upper_bound, right_bound, lower_bound)  [line 223]
+    Low-level screenshot/cropping helper for region-based inspection.
+- symbol_present(compare_img, filename, search_image_path, symbol_image_path, left_bound, top_bound, right_bound, bottom_bound, tolerance)  [line 236]
+    Template/pixel probe for detecting presence of a specific UI glyph.
+- ocr_cleanup(ocr_dirty)  [line 269]
+    Optical character recognition for 'cleanup' elements.
+- ocr_nav_ui(nav_img, ui_position)  [line 325]
+    Optical character recognition for 'nav ui' elements.
+- ocr_enemy_ui(nav_img, ui_position)  [line 338]
+    Optical character recognition for 'enemy ui' elements.
+- ocr_enemy_distance(nav_img, ui_position)  [line 355]
+    Optical character recognition for 'enemy distance' elements.
+- ocr_enemy_distance_alternative(nav_img, ui_position)  [line 390]
+    Optical character recognition for 'enemy distance alternative' elements.
+- count_pixels(count_img, r1, r2, g1, g2, b1, b2)  [line 442]
+    Utility/helper function.
+- grab_screen()  [line 469]
+    Captures/derives the current 'screen' UI state from the screen.
+- click(x_position, y_position, action_type, x_variance, y_variance, index)  [line 538]
+    Utility/helper function.
+- calculate_control_point(start_point, end_point, offset_distance, bend_direction)  [line 640]
+    Utility/helper function.
+- calculate_bezier_point(t, start_point, control_point, end_point)  [line 670]
+    Utility/helper function.
+- drag_with_curve(start_point, end_point, steps, curve_factor)  [line 677]
+    Human-like drag gesture between two points following a curved path.
+- delay(min_time, max_time)  [line 715]
+    Utility/helper function.
+- open_nav()  [line 724]
+    Ensures the Nav UI is open (or cycles it) so rows can be read/clicked.
+- close_nav()  [line 730]
+    Ensures the Nav UI is open (or cycles it) so rows can be read/clicked.
+- click_nav(nav_num, action_type, min_delay, max_delay)  [line 735]
+    Simulates a click on 'nav' within the game UI (adds randomized jitter and delays).
+- grab_click_nav_coords(nav_num, action_type)  [line 741]
+    Captures/derives the current 'click nav coords' UI state from the screen.
+- click_module(module, action_type)  [line 763]
+    Simulates a click on 'module' within the game UI (adds randomized jitter and delays).
+- click_autolock()  [line 769]
+    Simulates a click on 'autolock' within the game UI (adds randomized jitter and delays).
+- grab_auto_lock(auto_lock_img)  [line 776]
+    Scans a screen region to detect/measure 'auto lock' status using pixel-count heuristics.
+- scan_enemy_ui(scan_img)  [line 792]
+    Utility/helper function.
+- scan_approach_velocity(velocity_img)  [line 804]
+    Utility/helper function.
+- grab_siege(scan_img)  [line 815]
+    Scans a screen region to detect/measure 'siege' status using pixel-count heuristics.
+- grab_web(web_img, mod_num)  [line 823]
+    Scans a screen region to detect/measure 'web' status using pixel-count heuristics.
+- grab_fca_1(fca_1_img)  [line 841]
+    Scans a screen region to detect/measure 'fca 1' status using pixel-count heuristics.
+- grab_fca_2(fca_2_img)  [line 848]
+    Scans a screen region to detect/measure 'fca 2' status using pixel-count heuristics.
+- grab_fca_3(fca_3_img)  [line 855]
+    Scans a screen region to detect/measure 'fca 3' status using pixel-count heuristics.
+- grab_battery(battery_img)  [line 862]
+    Scans a screen region to detect/measure 'battery' status using pixel-count heuristics.
+- backup_grab_enemy(bak_enemy_img)  [line 873]
+    Utility/helper function.
+- refresh_nav_ui(ui_open_check_img)  [line 884]
+    Ensures the Nav UI is open (or cycles it) so rows can be read/clicked.
+- open_nav_ui(ui_open_check_img)  [line 911]
+    Ensures the Nav UI is open (or cycles it) so rows can be read/clicked.
+- expand_ui()  [line 931]
+    Drags to expand the Nav/Enemy UI list for more rows.
+- grab_health()  [line 938]
+    Scans a screen region to detect/measure 'health' status using pixel-count heuristics.
+- process_image(proc_img, i, ui_custom)  [line 951]
+    Multithreaded OCR/analysis helpers for reading multiple UI rows quickly.
+- process_images_concurrently(anom_type_img, anom_max, ui_custom)  [line 980]
+    Multithreaded OCR/analysis helpers for reading multiple UI rows quickly.
+- grab_anom_types(anom_type_img, anom_max, ui_custom)  [line 1003]
+    Captures/derives the current 'anom types' UI state from the screen.
+- grab_enemy_present(enemy_present_img)  [line 1008]
+    Scans a screen region to detect/measure 'enemy present' status using pixel-count heuristics.
+- filter_anomalies(anomaly_list)  [line 1018]
+    Utility/helper function.
+- read_previous_anom_type()  [line 1033]
+    Utility/helper function.
+- anom_alarm()  [line 1042]
+    Utility/helper function.
+- grab_enemy_list_ocr()  [line 1049]
+    Reads on-screen text for 'enemy list ocr' via OCR.
+- grab_next_anom()  [line 1056]
+    Captures/derives the current 'next anom' UI state from the screen.
+- travel(nav_action)  [line 1106]
+    Handles anomaly selection and warp/approach flow; transitions UI to combat state.
+- enemy_cnt_cycle()  [line 1227]
+    Background thread loop that periodically updates state and triggers actions.
+- cycle_counter()  [line 1228]
+    Background thread loop that periodically updates state and triggers actions.
+- heatsink_cycle(frig_lock)  [line 1243]
+    Background thread loop that periodically updates state and triggers actions.
+- cycle_heatsinks()  [line 1250]
+    Background thread loop that periodically updates state and triggers actions.
+- enemy_distance_cycle()  [line 1273]
+    Background thread loop that periodically updates state and triggers actions.
+- cycle_distance()  [line 1274]
+    Background thread loop that periodically updates state and triggers actions.
+- grab_enemy_cnt(cnt_img)  [line 1416]
+    Reads on-screen text for 'enemy cnt' via OCR.
+- set_desto()  [line 1432]
+    Sets a bookmark destination in the UI for travel workflow.
+- pull_local(image)  [line 1476]
+    Utility/helper function.
+- scan_down_pixels(scan_down_image, target_colors, x_offset, y_offset, color_range)  [line 1477]
+    Utility/helper function.
+- isolate_local(local_image_temp)  [line 1494]
+    Utility/helper function.
+- grab_local(l_img)  [line 1517]
+    Captures/derives the current 'local' UI state from the screen.
+- open_image(filename2)  [line 1537]
+    Utility/helper function.
+- grab_hash(hash_img)  [line 1546]
+    Captures/derives the current 'hash' UI state from the screen.
+- ocr_local(ocr_local_img, comma, space)  [line 1558]
+    Optical character recognition for 'local' elements.
+- get_concat_h(img1, img2, img3, comma, space)  [line 1564]
+    Utility/helper function.
+- kill_switch_cycle()  [line 1661]
+    Background thread loop that periodically updates state and triggers actions.
+- dock_check()  [line 1662]
+    Utility/helper function.
